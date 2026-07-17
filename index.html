@@ -287,10 +287,6 @@
 
     .is-ready .ready { display: none; }
 
-    .is-roulette .hud { opacity: .28; }
-    .is-roulette .joystick,
-    .is-roulette .shoot { pointer-events: none; opacity: .18; }
-
     .splash {
       position: absolute;
       z-index: 20;
@@ -593,7 +589,6 @@
       cabinet.classList.toggle("is-ready", mode === "ready");
       cabinet.classList.toggle("is-paused", mode === "paused");
       cabinet.classList.toggle("is-over", mode === "over");
-      cabinet.classList.toggle("is-roulette", mode === "roulette");
       if (mode === "over") finalText.textContent = `最终得分 ${state.score}`;
     }
 
@@ -793,7 +788,7 @@
     }
 
     function startRoulette() {
-      if (state.pendingLevels <= 0 || state.mode !== "play") return;
+      if (state.pendingLevels <= 0 || state.mode !== "play" || state.roulette) return;
       state.pendingLevels -= 1;
       state.roulette = {
         time: 0,
@@ -803,8 +798,6 @@
         title: "LEVEL UP!",
         subtitle: "老虎轮盘启动"
       };
-      keys.shoot = false;
-      setMode("roulette");
     }
 
     function gainXp(amount) {
@@ -815,7 +808,7 @@
         state.pendingLevels += 1;
         state.xpNeed = xpNeedForLevel(state.level);
       }
-      if (state.pendingLevels > 0 && state.mode === "play") startRoulette();
+      if (state.pendingLevels > 0 && state.mode === "play" && !state.roulette) startRoulette();
     }
 
     function resolveRoulette() {
@@ -863,7 +856,6 @@
       if (!roulette.resolved && roulette.time >= 1.48) resolveRoulette();
       if (roulette.time >= 2.62) {
         state.roulette = null;
-        setMode("play");
         if (state.pendingLevels > 0) startRoulette();
       }
     }
@@ -1747,73 +1739,82 @@
 
     function drawRoulette() {
       const roulette = state.roulette;
-      if (state.mode !== "roulette" || !roulette) return;
+      if (!roulette || state.mode !== "play") return;
+      const x = 286;
+      const y = 170;
+      const pulse = roulette.resolved ? 1 + Math.sin(roulette.time * 18) * .025 : 1;
       ctx.save();
-      ctx.fillStyle = "rgba(19, 10, 24, .72)";
-      ctx.fillRect(0, 0, W, H);
+      ctx.translate(x + 119, y + 88);
+      ctx.scale(pulse, pulse);
+      ctx.translate(-119, -88);
+      ctx.shadowColor = "rgba(36, 18, 13, .42)";
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 7;
       ctx.fillStyle = "#d92e3e";
-      ctx.strokeStyle = "#ffd447";
-      ctx.lineWidth = 7;
-      roundedRect(48, 220, 444, 420, 8);
+      ctx.strokeStyle = roulette.resolved ? "#fff06a" : "#ffd447";
+      ctx.lineWidth = roulette.resolved ? 6 : 4;
+      roundedRect(0, 0, 238, 176, 8);
       ctx.fill();
       ctx.stroke();
+      ctx.shadowColor = "transparent";
       ctx.fillStyle = "#ff9f32";
       ctx.beginPath();
-      ctx.moveTo(88, 224);
-      ctx.lineTo(125, 174);
-      ctx.lineTo(164, 224);
-      ctx.moveTo(376, 224);
-      ctx.lineTo(415, 174);
-      ctx.lineTo(452, 224);
+      ctx.moveTo(14, 5);
+      ctx.lineTo(38, -25);
+      ctx.lineTo(66, 5);
+      ctx.moveTo(172, 5);
+      ctx.lineTo(200, -25);
+      ctx.lineTo(224, 5);
       ctx.fill();
       ctx.fillStyle = "#24120d";
-      for (const x of [110, 148, 392, 430]) {
-        ctx.save();
-        ctx.translate(x, 211);
-        ctx.rotate(x < 270 ? -.55 : .55);
-        ctx.fillRect(-5, -24, 10, 42);
-        ctx.restore();
-      }
+      ctx.save();
+      ctx.translate(42, 1);
+      ctx.rotate(-.55);
+      ctx.fillRect(-4, -20, 8, 33);
+      ctx.restore();
+      ctx.save();
+      ctx.translate(196, 1);
+      ctx.rotate(.55);
+      ctx.fillRect(-4, -20, 8, 33);
+      ctx.restore();
       ctx.textAlign = "center";
       ctx.fillStyle = "#fff4bf";
-      ctx.font = "900 31px sans-serif";
-      ctx.fillText("老虎轮盘", 270, 270);
-      ctx.fillStyle = roulette.resolved ? "#ffd447" : "#42edff";
-      ctx.font = "900 20px sans-serif";
-      ctx.fillText(roulette.title, 270, 302);
+      ctx.font = "900 17px sans-serif";
+      ctx.fillText("老虎轮盘", 119, 24);
       for (let i = 0; i < 3; i += 1) {
-        const x = 82 + i * 132;
+        const reelX = 14 + i * 68;
         ctx.fillStyle = "#fff7df";
         ctx.strokeStyle = "#24120d";
-        ctx.lineWidth = 5;
-        roundedRect(x, 330, 112, 128, 8);
+        ctx.lineWidth = 3;
+        roundedRect(reelX, 36, 58, 66, 6);
         ctx.fill();
         ctx.stroke();
         const def = skillDefs[roulette.display[i]];
-        const bounce = roulette.resolved ? 0 : Math.sin(roulette.time * 34 + i) * 8;
-        drawSkillIcon(def.id, x + 56, 394 + bounce, 37);
+        const bounce = roulette.resolved ? 0 : Math.sin(roulette.time * 34 + i) * 5;
+        drawSkillIcon(def.id, reelX + 29, 69 + bounce, 19);
       }
-      ctx.fillStyle = "#ffd447";
       ctx.strokeStyle = "#24120d";
-      ctx.lineWidth = 5;
+      ctx.lineWidth = 4;
       ctx.beginPath();
-      ctx.arc(477, 342 + Math.sin(Math.min(1, roulette.time) * Math.PI) * 54, 18, 0, Math.PI * 2);
+      ctx.moveTo(229, 49);
+      ctx.lineTo(229, 103);
+      ctx.stroke();
+      ctx.fillStyle = "#ffd447";
+      ctx.beginPath();
+      ctx.arc(229, 48 + Math.sin(Math.min(1, roulette.time) * Math.PI) * 28, 9, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(477, 360);
-      ctx.lineTo(477, 462);
-      ctx.stroke();
+      ctx.fillStyle = roulette.resolved ? "#ffd447" : "#42edff";
+      ctx.font = "900 14px sans-serif";
+      ctx.fillText(roulette.title, 119, 126);
       ctx.fillStyle = "#fff4bf";
-      ctx.font = "900 24px sans-serif";
-      ctx.fillText(roulette.subtitle, 270, 510);
-      if (roulette.resolved) {
-        const pulse = 1 + Math.sin(roulette.time * 18) * .08;
-        ctx.save();
-        ctx.translate(270, 566);
-        ctx.scale(pulse, pulse);
-        drawSkillIcon(roulette.upgradeId, 0, 0, 35);
-        ctx.restore();
+      ctx.font = "900 15px sans-serif";
+      ctx.fillText(roulette.subtitle, 119, 151);
+      for (const boltX of [10, 228]) {
+        ctx.fillStyle = "#fff06a";
+        ctx.beginPath();
+        ctx.arc(boltX, 166, 4, 0, Math.PI * 2);
+        ctx.fill();
       }
       ctx.restore();
     }
@@ -1847,12 +1848,12 @@
       ctx.fillStyle = "rgba(36, 18, 13, .72)";
       ctx.strokeStyle = "rgba(255, 244, 191, .78)";
       ctx.lineWidth = 2;
-      roundedRect(176, 166, 188, 50, 8);
+      roundedRect(92, 166, 180, 50, 8);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = "#fff4bf";
       ctx.font = "900 22px sans-serif";
-      ctx.fillText(`第 ${state.wave} 关`, 270, 198);
+      ctx.fillText(`第 ${state.wave} 关`, 182, 198);
       ctx.restore();
     }
 
@@ -1885,7 +1886,7 @@
       const dt = Math.min(.034, (t - state.last) / 1000 || 0);
       state.last = t;
       if (state.mode === "play") update(dt);
-      else if (state.mode === "roulette") updateRoulette(dt);
+      if (state.mode === "play" && state.roulette) updateRoulette(dt);
       render(t);
       requestAnimationFrame(loop);
     }
