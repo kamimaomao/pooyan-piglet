@@ -286,6 +286,10 @@
 
     .is-ready .ready { display: none; }
 
+    .is-roulette .hud { opacity: .28; }
+    .is-roulette .joystick,
+    .is-roulette .shoot { pointer-events: none; opacity: .18; }
+
     .splash {
       position: absolute;
       z-index: 20;
@@ -425,11 +429,18 @@
     const basketDraw = { x: -42, y: -58, w: 112, h: 112 };
     const enemyDraw = { x: -38, y: -38, w: 76, h: 76 };
     const arrowDraw = { x: -40, y: -10, w: 86, h: 21 };
-    const maxArrows = 2;
     const arrowGravity = 420;
     const arrowSpeedX = 500;
     const arrowLift = -110;
     const keys = { up: false, down: false, shoot: false };
+    const skillDefs = [
+      { id: "chain", name: "闪电链", color: "#42edff" },
+      { id: "fire", name: "烈焰箭", color: "#ff613f" },
+      { id: "multi", name: "散射", color: "#7ef06b" },
+      { id: "pierce", name: "穿透", color: "#d58cff" },
+      { id: "rapid", name: "急速", color: "#ffd447" },
+      { id: "crit", name: "暴击", color: "#ff75c8" }
+    ];
 
     let dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
     let scale = 1;
@@ -486,18 +497,31 @@
       lives: 3,
       wave: 1,
       waveDone: 0,
-      waveTarget: 9,
+      waveTarget: 10,
       waveBreak: 1.1,
       waveText: 1.35,
       spawn: .7,
       shootCd: 0,
       shake: 0,
       flash: 0,
+      xp: 0,
+      xpNeed: 2,
+      level: 0,
+      pendingLevels: 0,
+      skills: { chain: 0, fire: 0, multi: 0, pierce: 0, rapid: 0, crit: 0 },
+      roulette: null,
+      enemySeq: 0,
+      combo: 0,
+      comboTimer: 0,
       basket: { y: 472, vy: 0, mood: 0 },
       arrows: [],
       wolves: [],
       lunchDrops: [],
       pops: [],
+      bolts: [],
+      flames: [],
+      rings: [],
+      damageTexts: [],
       clouds: []
     };
 
@@ -526,19 +550,32 @@
       state.world = "sky";
       state.wave = 1;
       state.waveDone = 0;
-      state.waveTarget = 9;
+      state.waveTarget = 10;
       state.waveBreak = 1.1;
       state.waveText = 1.35;
       state.spawn = .45;
       state.shootCd = 0;
       state.shake = 0;
       state.flash = 0;
+      state.xp = 0;
+      state.xpNeed = 2;
+      state.level = 0;
+      state.pendingLevels = 0;
+      state.skills = { chain: 0, fire: 0, multi: 0, pierce: 0, rapid: 0, crit: 0 };
+      state.roulette = null;
+      state.enemySeq = 0;
+      state.combo = 0;
+      state.comboTimer = 0;
       state.basket.y = 472;
       state.basket.vy = 0;
       state.arrows = [];
       state.wolves = [];
       state.lunchDrops = [];
       state.pops = [];
+      state.bolts = [];
+      state.flames = [];
+      state.rings = [];
+      state.damageTexts = [];
       state.clouds = Array.from({ length: 9 }, (_, i) => ({
         x: Math.random() * W,
         y: 95 + Math.random() * 360,
@@ -555,6 +592,7 @@
       cabinet.classList.toggle("is-ready", mode === "ready");
       cabinet.classList.toggle("is-paused", mode === "paused");
       cabinet.classList.toggle("is-over", mode === "over");
+      cabinet.classList.toggle("is-roulette", mode === "roulette");
       if (mode === "over") finalText.textContent = `最终得分 ${state.score}`;
     }
 
@@ -568,28 +606,67 @@
         reset();
         return;
       }
-      if (state.mode !== "play" || state.shootCd > 0 || state.arrows.length >= maxArrows) return;
-      state.shootCd = .18;
+      const multiLevel = state.skills.multi;
+      const arrowLimit = 2 + Math.min(8, multiLevel * 2);
+      if (state.mode !== "play" || state.shootCd > 0 || state.arrows.length >= arrowLimit) return;
+      state.shootCd = Math.max(.07, .18 * Math.pow(.86, state.skills.rapid));
       state.basket.mood = .15;
-      state.arrows.push({
-        x: liftX + 68,
-        y: state.basket.y - 4,
-        vx: arrowSpeedX,
-        vy: arrowLift + state.basket.vy * .04,
-        angle: -.18,
-        wobble: Math.random() * Math.PI * 2
-      });
+      const count = 1 + Math.min(4, Math.ceil(multiLevel / 2));
+      for (let i = 0; i < count; i += 1) {
+        const spread = (i - (count - 1) * .5) * 34;
+        state.arrows.push({
+          x: liftX + 68,
+          y: state.basket.y - 4 + spread * .55,
+          vx: arrowSpeedX,
+          vy: arrowLift + state.basket.vy * .04 + spread * .18,
+          angle: -.18,
+          wobble: Math.random() * Math.PI * 2,
+          pierce: state.skills.pierce,
+          hitIds: [],
+          fire: state.skills.fire,
+          chain: state.skills.chain
+        });
+      }
       addPop(liftX + 82, state.basket.y - 4, "#ffffff", 4);
+    }
+
+    function targetForStage(stage) {
+      if (stage === 1) return 10;
+      if (stage === 2) return 36;
+      return Math.min(96, 48 + (stage - 3) * 12);
+    }
+
+    function enemyHpForStage(stage, kind) {
+      if (stage === 1) return 1;
+      const roll = Math.random();
+      let hp;
+      if (stage === 2) hp = roll < .5 ? 1 : roll < .78 ? 2 : roll < .95 ? 4 : 6;
+      else if (stage === 3) hp = roll < .28 ? 1 : roll < .64 ? 2 : roll < .9 ? 4 : 6;
+      else hp = roll < .25 ? 2 : roll < .62 ? 3 : roll < .88 ? 5 : 8 + Math.floor((stage - 4) * .8);
+      if (kind === "turtle" || kind === "puffer") hp = Math.max(2, hp);
+      return hp;
+    }
+
+    function nextSpawnDelay(stage) {
+      if (stage === 1) return .68 + Math.random() * .22;
+      if (stage === 2) return .24 + Math.random() * .14;
+      return Math.max(.18, .34 - stage * .012) + Math.random() * .14;
     }
 
     function spawnWolf() {
       if (state.waveDone >= state.waveTarget || state.waveBreak > 0) return;
+      const active = state.wolves.filter((wolf) => !wolf.hit).length;
+      const activeCap = state.wave === 1 ? 3 : Math.min(20, 12 + state.wave);
+      if (active >= activeCap) {
+        state.spawn = .08;
+        return;
+      }
       if (state.world === "underwater") {
         spawnUnderwaterEnemy();
         return;
       }
       const columns = [248, 314, 380, 446, 502];
-      const direction = state.wave === 2 ? -1 : 1;
+      const direction = state.wave % 2 === 0 ? -1 : 1;
       const startY = direction > 0 ? playTop - 46 : playBottom + 46;
       const openColumns = columns.filter((column) => !state.wolves.some((wolf) => !wolf.hit && !wolf.underwater && Math.abs(wolf.baseX - column) < 12 && Math.abs(wolf.y - startY) < 126));
       const lanePool = openColumns.length ? openColumns : columns;
@@ -603,8 +680,10 @@
         else if (roll < .44) kind = "cat";
         else if (roll < .58) kind = "happyDog";
       }
-      const speed = 32 + (state.wave - 1) * 4 + (kind === "cat" ? 3 : kind === "bat" ? 2 : 0);
+      const speed = (state.wave === 1 ? 32 : 39 + state.wave * 2) + (kind === "cat" ? 3 : kind === "bat" ? 2 : 0);
+      const hp = enemyHpForStage(state.wave, kind);
       state.wolves.push({
+        id: ++state.enemySeq,
         x,
         y: startY,
         baseX: x,
@@ -617,14 +696,17 @@
         amp: kind === "bat" ? 10 : kind === "cat" ? 8 : kind === "turtle" ? 5 : 6,
         color: ["#ff4b43", "#22bfd1", "#ffd447", "#66d85f"][Math.floor(Math.random() * 4)],
         hit: false,
-        hp: kind === "turtle" ? 2 : state.wave === 2 && kind === "wolf" && Math.random() < .22 ? 2 : 1,
+        hp,
+        maxHp: hp,
+        burn: 0,
+        burnTick: 0,
         bite: 0,
         fast: false,
         kind,
         direction,
         sprite: Math.floor(Math.random() * 4)
       });
-      state.spawn = (state.wave === 1 ? .84 : .72) + Math.random() * .28;
+      state.spawn = nextSpawnDelay(state.wave);
     }
 
     function spawnUnderwaterEnemy() {
@@ -638,12 +720,14 @@
       const y = lanes[Math.floor(Math.random() * lanes.length)] + (Math.random() - .5) * 18;
       const puffer = kind === "puffer";
       const crab = kind === "crab";
+      const hp = enemyHpForStage(state.wave, kind);
       state.wolves.push({
+        id: ++state.enemySeq,
         x: W + 48,
         y,
         baseX: W + 48,
         baseY: y,
-        vx: puffer ? 44 : crab ? 48 : kind === "seahorse" ? 56 : 52,
+        vx: (puffer ? 44 : crab ? 48 : kind === "seahorse" ? 56 : 52) + Math.min(18, (state.wave - 3) * 2),
         vy: 0,
         balloon: puffer ? 30 : 24,
         bob: Math.random() * Math.PI * 2,
@@ -651,13 +735,16 @@
         amp: kind === "fish" ? 24 : kind === "octopus" ? 28 : kind === "seahorse" ? 20 : crab ? 16 : 12,
         color: "#78e7ff",
         hit: false,
-        hp: puffer ? 2 : 1,
+        hp,
+        maxHp: hp,
+        burn: 0,
+        burnTick: 0,
         bite: 0,
         fast: false,
         kind,
         underwater: true
       });
-      state.spawn = Math.max(.56, .9 - state.wave * .025) + Math.random() * .28;
+      state.spawn = nextSpawnDelay(state.wave);
     }
 
     function enemyTarget(enemy) {
@@ -671,6 +758,113 @@
       };
       const target = targets[enemy.kind] || targets.fish;
       return { x: enemy.x + target.x, y: enemy.y + target.y, r: target.r };
+    }
+
+    function skillDef(id) {
+      return skillDefs.find((skill) => skill.id === id) || skillDefs[0];
+    }
+
+    function xpNeedForLevel(level) {
+      return Math.max(2, Math.round(2 * Math.pow(1.55, level)));
+    }
+
+    function makeRollResult() {
+      const randomSkill = () => skillDefs[Math.floor(Math.random() * skillDefs.length)].id;
+      const chance = Math.random();
+      if (chance < .1) {
+        const id = randomSkill();
+        return [id, id, id];
+      }
+      if (chance < .52) {
+        const pair = randomSkill();
+        let odd = randomSkill();
+        while (odd === pair) odd = randomSkill();
+        const result = [pair, pair, odd];
+        result.sort(() => Math.random() - .5);
+        return result;
+      }
+      const result = [];
+      while (result.length < 3) {
+        const id = randomSkill();
+        if (!result.includes(id)) result.push(id);
+      }
+      return result;
+    }
+
+    function startRoulette() {
+      if (state.pendingLevels <= 0 || state.mode !== "play") return;
+      state.pendingLevels -= 1;
+      state.roulette = {
+        time: 0,
+        result: makeRollResult(),
+        display: [0, 2, 4],
+        resolved: false,
+        title: "LEVEL UP!",
+        subtitle: "老虎轮盘启动"
+      };
+      keys.shoot = false;
+      setMode("roulette");
+    }
+
+    function gainXp(amount) {
+      state.xp += amount;
+      while (state.xp >= state.xpNeed) {
+        state.xp -= state.xpNeed;
+        state.level += 1;
+        state.pendingLevels += 1;
+        state.xpNeed = xpNeedForLevel(state.level);
+      }
+      if (state.pendingLevels > 0 && state.mode === "play") startRoulette();
+    }
+
+    function resolveRoulette() {
+      const roll = state.roulette.result;
+      const counts = {};
+      for (const id of roll) counts[id] = (counts[id] || 0) + 1;
+      let upgradeId;
+      let amount = 1;
+      const triple = Object.keys(counts).find((id) => counts[id] === 3);
+      const pair = Object.keys(counts).find((id) => counts[id] === 2);
+      if (triple) {
+        upgradeId = triple;
+        amount = 2;
+        state.roulette.title = "三连大奖 +2";
+      } else if (pair) {
+        upgradeId = pair;
+        state.roulette.title = "双图命中 +1";
+      } else {
+        const minLevel = Math.min(...skillDefs.map((skill) => state.skills[skill.id]));
+        const lowest = skillDefs.filter((skill) => state.skills[skill.id] === minLevel);
+        upgradeId = lowest[Math.floor(Math.random() * lowest.length)].id;
+        state.roulette.title = "均衡补强 +1";
+      }
+      state.skills[upgradeId] += amount;
+      const def = skillDef(upgradeId);
+      state.roulette.subtitle = `${def.name}  Lv.${state.skills[upgradeId]}`;
+      state.roulette.upgradeId = upgradeId;
+      state.roulette.amount = amount;
+      state.roulette.resolved = true;
+      state.shake = Math.max(state.shake, triple ? .55 : .28);
+      state.flash = Math.max(state.flash, triple ? .32 : .12);
+      addPop(270, 470, def.color, triple ? 34 : 20);
+    }
+
+    function updateRoulette(dt) {
+      const roulette = state.roulette;
+      if (!roulette) return;
+      roulette.time += dt;
+      for (let i = 0; i < 3; i += 1) {
+        const stopAt = 1.02 + i * .2;
+        roulette.display[i] = roulette.time >= stopAt
+          ? skillDefs.findIndex((skill) => skill.id === roulette.result[i])
+          : Math.floor((roulette.time * (19 - i * 2) + i * 1.8) % skillDefs.length);
+      }
+      if (!roulette.resolved && roulette.time >= 1.48) resolveRoulette();
+      if (roulette.time >= 2.62) {
+        state.roulette = null;
+        setMode("play");
+        if (state.pendingLevels > 0) startRoulette();
+      }
     }
 
     function addPop(x, y, color, count = 10) {
@@ -688,24 +882,132 @@
       }
     }
 
-    function hitWolf(wolf) {
-      if (wolf.hit) return;
-      wolf.hp -= 1;
-      if (wolf.hp > 0) {
-        wolf.flash = .18;
-        wolf.vy *= .72;
-        wolf.vx *= .84;
-        const target = enemyTarget(wolf);
-        addPop(target.x, target.y, "#ffffff", 6);
-        return;
+    function addDamageText(x, y, text, color) {
+      state.damageTexts.push({ x, y, text, color, age: 0, life: .7, vy: -52 });
+    }
+
+    function addFlameBurst(x, y, count = 9) {
+      for (let i = 0; i < count; i += 1) {
+        state.flames.push({
+          x,
+          y,
+          vx: (Math.random() - .5) * 150,
+          vy: -40 - Math.random() * 130,
+          age: 0,
+          life: .34 + Math.random() * .36,
+          size: 5 + Math.random() * 10,
+          color: Math.random() < .45 ? "#ffd447" : "#ff4b32"
+        });
       }
+    }
+
+    function addBolt(from, to) {
+      const points = [from];
+      for (let i = 1; i < 6; i += 1) {
+        const p = i / 6;
+        points.push({
+          x: from.x + (to.x - from.x) * p + (Math.random() - .5) * 18,
+          y: from.y + (to.y - from.y) * p + (Math.random() - .5) * 18
+        });
+      }
+      points.push(to);
+      state.bolts.push({ points, age: 0, life: .22 });
+    }
+
+    function killEnemy(wolf) {
+      if (wolf.hit) return;
       wolf.hit = true;
       state.waveDone += 1;
-      state.score += wolf.underwater ? (wolf.kind === "puffer" ? 70 : wolf.kind === "crab" ? 55 : 45) : wolf.kind === "turtle" ? 75 : wolf.kind === "bat" ? 60 : wolf.kind === "cat" ? 50 : wolf.kind === "happyDog" ? 55 : (wolf.fast ? 35 : 20);
+      state.combo = state.comboTimer > 0 ? state.combo + 1 : 1;
+      state.comboTimer = 1.45;
+      const baseScore = wolf.underwater ? (wolf.kind === "puffer" ? 70 : wolf.kind === "crab" ? 55 : 45) : wolf.kind === "turtle" ? 75 : wolf.kind === "bat" ? 60 : wolf.kind === "cat" ? 50 : wolf.kind === "happyDog" ? 55 : 20;
+      state.score += baseScore + wolf.maxHp * 8 + state.combo * 2;
       const target = enemyTarget(wolf);
       addPop(target.x, target.y, wolf.color, wolf.underwater ? 20 : 16);
       addPop(wolf.x + 4, wolf.y + 12, "#ffffff", 8);
+      gainXp(wolf.maxHp >= 6 ? 2 : 1);
       syncHud();
+    }
+
+    function damageEnemy(wolf, amount, color = "#fff4bf") {
+      if (wolf.hit) return false;
+      wolf.hp -= amount;
+      wolf.flash = .18;
+      const target = enemyTarget(wolf);
+      addDamageText(target.x, target.y - 12, `-${amount}`, color);
+      if (wolf.hp <= 0) {
+        killEnemy(wolf);
+        return true;
+      }
+      addPop(target.x, target.y, color, 5);
+      return false;
+    }
+
+    function igniteEnemies(origin, level) {
+      if (level <= 0) return;
+      const center = enemyTarget(origin);
+      const radius = 38 + level * 9;
+      state.rings.push({ x: center.x, y: center.y, radius, age: 0, life: .34, color: "#ff623e" });
+      addFlameBurst(center.x, center.y, 8 + level * 2);
+      for (const wolf of state.wolves) {
+        if (wolf.hit) continue;
+        const target = enemyTarget(wolf);
+        if (wolf === origin || Math.hypot(target.x - center.x, target.y - center.y) <= radius) {
+          wolf.burn = Math.max(wolf.burn || 0, .62 + level * .18);
+          wolf.burnTick = Math.min(wolf.burnTick || .18, .18);
+        }
+      }
+    }
+
+    function triggerChain(origin, level) {
+      if (level <= 0) return;
+      let current = origin;
+      const visited = [origin.id];
+      const jumps = 1 + Math.floor((level - 1) / 2);
+      const range = 170 + level * 12;
+      const damage = 1 + Math.floor((level - 1) / 3);
+      for (let i = 0; i < jumps; i += 1) {
+        const from = enemyTarget(current);
+        let next = null;
+        let best = range;
+        for (const candidate of state.wolves) {
+          if (candidate.hit || visited.includes(candidate.id)) continue;
+          const target = enemyTarget(candidate);
+          const distance = Math.hypot(target.x - from.x, target.y - from.y);
+          if (distance < best) {
+            best = distance;
+            next = candidate;
+          }
+        }
+        if (!next) break;
+        const to = enemyTarget(next);
+        addBolt(from, to);
+        damageEnemy(next, damage, "#42edff");
+        visited.push(next.id);
+        current = next;
+      }
+    }
+
+    function handleArrowHit(arrow, wolf) {
+      if (arrow.hitIds.includes(wolf.id)) return;
+      arrow.hitIds.push(wolf.id);
+      const critLevel = state.skills.crit;
+      const critical = critLevel > 0 && Math.random() < Math.min(.62, critLevel * .12);
+      const damage = critical ? 2 + Math.floor(critLevel / 4) : 1;
+      damageEnemy(wolf, damage, critical ? "#ff75c8" : "#fff4bf");
+      if (critical) {
+        const target = enemyTarget(wolf);
+        addDamageText(target.x, target.y - 35, "暴击!", "#ff75c8");
+        state.shake = Math.max(state.shake, .18);
+      }
+      igniteEnemies(wolf, arrow.fire);
+      triggerChain(wolf, arrow.chain);
+      if (arrow.pierce > 0) arrow.pierce -= 1;
+      else arrow.x = W + 999;
+    }
+
+    function hitWolf(wolf) {
+      damageEnemy(wolf, 1);
     }
 
     function addLunchDrop(x = 88, y = 742) {
@@ -740,12 +1042,13 @@
     function beginNextWave() {
       state.wave += 1;
       state.waveDone = 0;
-      state.waveTarget = state.wave === 2 ? 10 : Math.min(16, 8 + state.wave);
+      state.waveTarget = targetForStage(state.wave);
       state.waveBreak = 1.25;
       state.waveText = 1.35;
-      state.spawn = .55;
+      state.spawn = .48;
       state.world = state.wave >= 3 ? "underwater" : "sky";
       state.arrows = [];
+      state.lives = Math.min(3, state.lives + 1);
       state.score += 50 + state.wave * 10;
       syncHud();
     }
@@ -789,6 +1092,16 @@
       for (const wolf of state.wolves) {
         wolf.bob += dt * 4.5;
         wolf.flash = Math.max(0, (wolf.flash || 0) - dt);
+        if (!wolf.hit && wolf.burn > 0) {
+          wolf.burn = Math.max(0, wolf.burn - dt);
+          wolf.burnTick -= dt;
+          if (wolf.burnTick <= 0) {
+            wolf.burnTick = .4;
+            const target = enemyTarget(wolf);
+            addFlameBurst(target.x, target.y, 3);
+            damageEnemy(wolf, 1, "#ff6a3d");
+          }
+        }
         if (wolf.underwater) {
           wolf.x -= wolf.vx * dt;
           wolf.phase += dt * (wolf.kind === "fish" ? 3.8 : wolf.kind === "octopus" ? 3.2 : 2.8);
@@ -808,8 +1121,7 @@
           if (wolf.hit) continue;
           const target = enemyTarget(wolf);
           if (Math.hypot(arrow.x - target.x, arrow.y - target.y) < target.r + 8) {
-            arrow.x = W + 999;
-            hitWolf(wolf);
+            handleArrowHit(arrow, wolf);
           }
         }
       }
@@ -823,6 +1135,19 @@
         pop.x += pop.vx * dt;
         pop.y += pop.vy * dt;
         pop.vy += 460 * dt;
+      }
+
+      for (const bolt of state.bolts) bolt.age += dt;
+      for (const ring of state.rings) ring.age += dt;
+      for (const flame of state.flames) {
+        flame.age += dt;
+        flame.x += flame.vx * dt;
+        flame.y += flame.vy * dt;
+        flame.vy += 190 * dt;
+      }
+      for (const text of state.damageTexts) {
+        text.age += dt;
+        text.y += text.vy * dt;
       }
 
       for (const lunch of state.lunchDrops) {
@@ -843,6 +1168,12 @@
       for (const wolf of state.wolves) if (wolf.hit) wolf.bob = 99;
       state.lunchDrops = state.lunchDrops.filter((lunch) => lunch.age < lunch.life);
       state.pops = state.pops.filter((pop) => pop.age < pop.life);
+      state.bolts = state.bolts.filter((bolt) => bolt.age < bolt.life);
+      state.rings = state.rings.filter((ring) => ring.age < ring.life);
+      state.flames = state.flames.filter((flame) => flame.age < flame.life);
+      state.damageTexts = state.damageTexts.filter((text) => text.age < text.life);
+      state.comboTimer = Math.max(0, state.comboTimer - dt);
+      if (state.comboTimer <= 0) state.combo = 0;
       state.shake = Math.max(0, state.shake - dt);
       state.flash = Math.max(0, state.flash - dt);
     }
@@ -1026,6 +1357,32 @@
       ctx.restore();
     }
 
+    function drawEnemyStatus(wolf, bobY = 0) {
+      if (wolf.hit) return;
+      if (wolf.burn > 0) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = `rgba(255, 91, 45, ${.35 + Math.sin(performance.now() * .02) * .16})`;
+        ctx.beginPath();
+        ctx.arc(wolf.x, wolf.y + bobY, 32, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      if (wolf.maxHp <= 1) return;
+      const ratio = Math.max(0, wolf.hp / wolf.maxHp);
+      const color = wolf.maxHp >= 6 ? "#ff4355" : wolf.maxHp >= 4 ? "#ff9c35" : "#48e8ff";
+      ctx.save();
+      ctx.fillStyle = "rgba(36, 18, 13, .78)";
+      roundedRect(wolf.x - 28, wolf.y + 39 + bobY, 56, 8, 4);
+      ctx.fill();
+      if (ratio > 0) {
+        ctx.fillStyle = color;
+        roundedRect(wolf.x - 26, wolf.y + 41 + bobY, 52 * ratio, 4, 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
     function drawWolf(wolf) {
       if (wolf.hit) return;
       const bobY = Math.sin(wolf.bob) * 2;
@@ -1035,6 +1392,7 @@
         if (wolf.flash > 0) ctx.globalAlpha = .55 + Math.sin(performance.now() * .05) * .35;
         ctx.drawImage(underwaterEnemyAsset.img, part.x, part.y, part.w, part.h, wolf.x + enemyDraw.x, wolf.y + enemyDraw.y + bobY, enemyDraw.w, enemyDraw.h);
         ctx.restore();
+        drawEnemyStatus(wolf, bobY);
         return;
       }
       if (spriteAsset.ready) {
@@ -1043,6 +1401,7 @@
         if (wolf.flash > 0) ctx.globalAlpha = .55 + Math.sin(performance.now() * .05) * .35;
         ctx.drawImage(spriteAsset.img, part.x, part.y, part.w, part.h, wolf.x + enemyDraw.x, wolf.y + enemyDraw.y + bobY, enemyDraw.w, enemyDraw.h);
         ctx.restore();
+        drawEnemyStatus(wolf, bobY);
         return;
       }
       ctx.save();
@@ -1105,9 +1464,30 @@
       ctx.closePath();
       ctx.fill();
       ctx.restore();
+      drawEnemyStatus(wolf, bobY);
     }
 
     function drawArrow(arrow) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      if (arrow.fire > 0) {
+        ctx.strokeStyle = `rgba(255, 90, 35, ${.55 + Math.sin(arrow.wobble) * .18})`;
+        ctx.lineWidth = 10 + Math.min(8, arrow.fire * 1.5);
+        ctx.beginPath();
+        ctx.moveTo(arrow.x - 42, arrow.y + 2);
+        ctx.lineTo(arrow.x - 5, arrow.y);
+        ctx.stroke();
+      }
+      if (arrow.chain > 0) {
+        ctx.strokeStyle = "rgba(80, 238, 255, .72)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(arrow.x - 34, arrow.y - 5);
+        ctx.lineTo(arrow.x - 20, arrow.y + 5);
+        ctx.lineTo(arrow.x - 7, arrow.y - 3);
+        ctx.stroke();
+      }
+      ctx.restore();
       if (spriteAsset.ready) {
         const part = atlas.arrow;
         ctx.save();
@@ -1179,6 +1559,264 @@
       }
     }
 
+    function drawCombatFx() {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (const ring of state.rings) {
+        const p = ring.age / ring.life;
+        ctx.globalAlpha = 1 - p;
+        ctx.strokeStyle = ring.color;
+        ctx.lineWidth = 7 * (1 - p) + 2;
+        ctx.beginPath();
+        ctx.arc(ring.x, ring.y, ring.radius * (.28 + p * .72), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      for (const bolt of state.bolts) {
+        ctx.globalAlpha = 1 - bolt.age / bolt.life;
+        ctx.strokeStyle = "#42edff";
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        bolt.points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
+        ctx.stroke();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      for (const flame of state.flames) {
+        const life = 1 - flame.age / flame.life;
+        ctx.globalAlpha = life;
+        ctx.fillStyle = flame.color;
+        ctx.beginPath();
+        ctx.arc(flame.x, flame.y, flame.size * life, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "900 18px sans-serif";
+      for (const text of state.damageTexts) {
+        ctx.globalAlpha = 1 - text.age / text.life;
+        ctx.fillStyle = text.color;
+        ctx.strokeStyle = "#24120d";
+        ctx.lineWidth = 4;
+        ctx.strokeText(text.text, text.x, text.y);
+        ctx.fillText(text.text, text.x, text.y);
+      }
+      ctx.restore();
+    }
+
+    function drawSkillIcon(id, x, y, size, alpha = 1) {
+      const def = skillDef(id);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(x, y);
+      ctx.fillStyle = "#24120d";
+      ctx.strokeStyle = def.color;
+      ctx.lineWidth = Math.max(2, size * .1);
+      ctx.beginPath();
+      ctx.arc(0, 0, size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = def.color;
+      ctx.strokeStyle = def.color;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      if (id === "chain") {
+        ctx.beginPath();
+        ctx.moveTo(3, -size * .72);
+        ctx.lineTo(-size * .38, 0);
+        ctx.lineTo(-2, 0);
+        ctx.lineTo(-5, size * .72);
+        ctx.lineTo(size * .42, -size * .12);
+        ctx.lineTo(5, -size * .12);
+        ctx.closePath();
+        ctx.fill();
+      } else if (id === "fire") {
+        ctx.beginPath();
+        ctx.moveTo(0, -size * .72);
+        ctx.bezierCurveTo(size * .65, -size * .1, size * .48, size * .68, 0, size * .72);
+        ctx.bezierCurveTo(-size * .62, size * .58, -size * .58, 0, 0, -size * .72);
+        ctx.fill();
+        ctx.fillStyle = "#ffd447";
+        ctx.beginPath();
+        ctx.arc(0, size * .28, size * .24, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (id === "multi") {
+        ctx.lineWidth = Math.max(2, size * .14);
+        for (const dy of [-size * .42, 0, size * .42]) {
+          ctx.beginPath();
+          ctx.moveTo(-size * .62, dy);
+          ctx.lineTo(size * .5, dy);
+          ctx.lineTo(size * .2, dy - size * .22);
+          ctx.moveTo(size * .5, dy);
+          ctx.lineTo(size * .2, dy + size * .22);
+          ctx.stroke();
+        }
+      } else if (id === "pierce") {
+        ctx.beginPath();
+        ctx.moveTo(-size * .7, size * .48);
+        ctx.lineTo(size * .6, -size * .65);
+        ctx.lineTo(size * .72, -size * .18);
+        ctx.lineTo(-size * .36, size * .68);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(size * .48, -size * .45, size * .13, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (id === "rapid") {
+        ctx.lineWidth = Math.max(2, size * .13);
+        ctx.beginPath();
+        ctx.arc(0, 0, size * .58, 0, Math.PI * 2);
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -size * .38);
+        ctx.moveTo(0, 0);
+        ctx.lineTo(size * .34, size * .2);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        for (let i = 0; i < 10; i += 1) {
+          const radius = i % 2 ? size * .28 : size * .72;
+          const angle = -Math.PI * .5 + i * Math.PI / 5;
+          const px = Math.cos(angle) * radius;
+          const py = Math.sin(angle) * radius;
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawBuildHud() {
+      const stageRatio = Math.min(1, state.waveDone / state.waveTarget);
+      const xpRatio = Math.min(1, state.xp / state.xpNeed);
+      ctx.save();
+      ctx.fillStyle = "rgba(36, 18, 13, .8)";
+      ctx.strokeStyle = "rgba(255, 238, 175, .62)";
+      ctx.lineWidth = 2;
+      roundedRect(18, 88, 244, 20, 6);
+      ctx.fill();
+      ctx.stroke();
+      roundedRect(278, 88, 244, 20, 6);
+      ctx.fill();
+      ctx.stroke();
+      if (stageRatio > 0) {
+        ctx.fillStyle = "#ff5f43";
+        roundedRect(21, 91, 238 * stageRatio, 14, 4);
+        ctx.fill();
+      }
+      if (xpRatio > 0) {
+        ctx.fillStyle = "#42edff";
+        roundedRect(281, 91, 238 * xpRatio, 14, 4);
+        ctx.fill();
+      }
+      ctx.fillStyle = "#fff4bf";
+      ctx.font = "900 12px sans-serif";
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      ctx.fillText(`第${state.wave}关  ${state.waveDone}/${state.waveTarget}`, 28, 98);
+      ctx.textAlign = "right";
+      ctx.fillText(`BUILD Lv.${state.level}  ${state.xp}/${state.xpNeed}`, 512, 98);
+      ctx.fillStyle = "rgba(36, 18, 13, .72)";
+      roundedRect(42, 114, 456, 38, 8);
+      ctx.fill();
+      for (let i = 0; i < skillDefs.length; i += 1) {
+        const def = skillDefs[i];
+        const level = state.skills[def.id];
+        const x = 61 + i * 74;
+        drawSkillIcon(def.id, x, 133, 13, level > 0 ? 1 : .32);
+        ctx.fillStyle = level > 0 ? def.color : "rgba(255,244,191,.36)";
+        ctx.textAlign = "left";
+        ctx.font = "900 12px sans-serif";
+        ctx.fillText(`Lv${level}`, x + 17, 133);
+      }
+      if (state.combo >= 3 && state.comboTimer > 0) {
+        ctx.textAlign = "right";
+        ctx.font = "900 25px sans-serif";
+        ctx.fillStyle = "#ffd447";
+        ctx.strokeStyle = "#24120d";
+        ctx.lineWidth = 5;
+        ctx.strokeText(`${state.combo} COMBO!`, 516, 184);
+        ctx.fillText(`${state.combo} COMBO!`, 516, 184);
+      }
+      ctx.restore();
+    }
+
+    function drawRoulette() {
+      const roulette = state.roulette;
+      if (state.mode !== "roulette" || !roulette) return;
+      ctx.save();
+      ctx.fillStyle = "rgba(19, 10, 24, .72)";
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = "#d92e3e";
+      ctx.strokeStyle = "#ffd447";
+      ctx.lineWidth = 7;
+      roundedRect(48, 220, 444, 420, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ff9f32";
+      ctx.beginPath();
+      ctx.moveTo(88, 224);
+      ctx.lineTo(125, 174);
+      ctx.lineTo(164, 224);
+      ctx.moveTo(376, 224);
+      ctx.lineTo(415, 174);
+      ctx.lineTo(452, 224);
+      ctx.fill();
+      ctx.fillStyle = "#24120d";
+      for (const x of [110, 148, 392, 430]) {
+        ctx.save();
+        ctx.translate(x, 211);
+        ctx.rotate(x < 270 ? -.55 : .55);
+        ctx.fillRect(-5, -24, 10, 42);
+        ctx.restore();
+      }
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#fff4bf";
+      ctx.font = "900 31px sans-serif";
+      ctx.fillText("老虎轮盘", 270, 270);
+      ctx.fillStyle = roulette.resolved ? "#ffd447" : "#42edff";
+      ctx.font = "900 20px sans-serif";
+      ctx.fillText(roulette.title, 270, 302);
+      for (let i = 0; i < 3; i += 1) {
+        const x = 82 + i * 132;
+        ctx.fillStyle = "#fff7df";
+        ctx.strokeStyle = "#24120d";
+        ctx.lineWidth = 5;
+        roundedRect(x, 330, 112, 128, 8);
+        ctx.fill();
+        ctx.stroke();
+        const def = skillDefs[roulette.display[i]];
+        const bounce = roulette.resolved ? 0 : Math.sin(roulette.time * 34 + i) * 8;
+        drawSkillIcon(def.id, x + 56, 394 + bounce, 37);
+      }
+      ctx.fillStyle = "#ffd447";
+      ctx.strokeStyle = "#24120d";
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(477, 342 + Math.sin(Math.min(1, roulette.time) * Math.PI) * 54, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(477, 360);
+      ctx.lineTo(477, 462);
+      ctx.stroke();
+      ctx.fillStyle = "#fff4bf";
+      ctx.font = "900 24px sans-serif";
+      ctx.fillText(roulette.subtitle, 270, 510);
+      if (roulette.resolved) {
+        const pulse = 1 + Math.sin(roulette.time * 18) * .08;
+        ctx.save();
+        ctx.translate(270, 566);
+        ctx.scale(pulse, pulse);
+        drawSkillIcon(roulette.upgradeId, 0, 0, 35);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
     function drawLunchDrops() {
       for (const lunch of state.lunchDrops) {
         const life = 1 - lunch.age / lunch.life;
@@ -1208,12 +1846,12 @@
       ctx.fillStyle = "rgba(36, 18, 13, .72)";
       ctx.strokeStyle = "rgba(255, 244, 191, .78)";
       ctx.lineWidth = 2;
-      roundedRect(176, 100, 188, 50, 8);
+      roundedRect(176, 166, 188, 50, 8);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = "#fff4bf";
       ctx.font = "900 22px sans-serif";
-      ctx.fillText(`第 ${state.wave} 波`, 270, 132);
+      ctx.fillText(`第 ${state.wave} 关`, 270, 198);
       ctx.restore();
     }
 
@@ -1230,6 +1868,7 @@
       for (const arrow of state.arrows) drawArrow(arrow);
       drawBasket(t);
       drawLunchDrops();
+      drawCombatFx();
       drawPops();
       drawWaveBanner();
       if (state.flash > 0) {
@@ -1237,12 +1876,15 @@
         ctx.fillRect(0, 0, W, H);
       }
       ctx.restore();
+      drawBuildHud();
+      drawRoulette();
     }
 
     function loop(t) {
       const dt = Math.min(.034, (t - state.last) / 1000 || 0);
       state.last = t;
       if (state.mode === "play") update(dt);
+      else if (state.mode === "roulette") updateRoulette(dt);
       render(t);
       requestAnimationFrame(loop);
     }
