@@ -507,6 +507,7 @@
       pendingLevels: 0,
       skills: { chain: 0, fire: 0, multi: 0, pierce: 0, rapid: 0, crit: 0 },
       roulette: null,
+      rouletteDisplay: [0, 2, 4],
       enemySeq: 0,
       combo: 0,
       comboTimer: 0,
@@ -560,6 +561,7 @@
       state.pendingLevels = 0;
       state.skills = { chain: 0, fire: 0, multi: 0, pierce: 0, rapid: 0, crit: 0 };
       state.roulette = null;
+      state.rouletteDisplay = [0, 2, 4];
       state.enemySeq = 0;
       state.combo = 0;
       state.comboTimer = 0;
@@ -852,6 +854,7 @@
         roulette.display[i] = roulette.time >= stopAt
           ? skillDefs.findIndex((skill) => skill.id === roulette.result[i])
           : Math.floor((roulette.time * (19 - i * 2) + i * 1.8) % skillDefs.length);
+        state.rouletteDisplay[i] = roulette.display[i];
       }
       if (!roulette.resolved && roulette.time >= 1.48) resolveRoulette();
       if (roulette.time >= 2.62) {
@@ -1713,17 +1716,17 @@
       ctx.textAlign = "right";
       ctx.fillText(`BUILD Lv.${state.level}  ${state.xp}/${state.xpNeed}`, 512, 98);
       ctx.fillStyle = "rgba(36, 18, 13, .72)";
-      roundedRect(42, 114, 456, 38, 8);
+      roundedRect(18, 114, 330, 38, 8);
       ctx.fill();
       for (let i = 0; i < skillDefs.length; i += 1) {
         const def = skillDefs[i];
         const level = state.skills[def.id];
-        const x = 61 + i * 74;
-        drawSkillIcon(def.id, x, 133, 13, level > 0 ? 1 : .32);
+        const x = 34 + i * 52;
+        drawSkillIcon(def.id, x, 133, 10, level > 0 ? 1 : .32);
         ctx.fillStyle = level > 0 ? def.color : "rgba(255,244,191,.36)";
         ctx.textAlign = "left";
-        ctx.font = "900 12px sans-serif";
-        ctx.fillText(`Lv${level}`, x + 17, 133);
+        ctx.font = "900 10px sans-serif";
+        ctx.fillText(`Lv${level}`, x + 13, 133);
       }
       if (state.combo >= 3 && state.comboTimer > 0) {
         ctx.textAlign = "right";
@@ -1739,83 +1742,71 @@
 
     function drawRoulette() {
       const roulette = state.roulette;
-      if (!roulette || state.mode !== "play") return;
-      const x = 286;
-      const y = 170;
-      const pulse = roulette.resolved ? 1 + Math.sin(roulette.time * 18) * .025 : 1;
+      if (state.mode !== "play" && state.mode !== "paused") return;
+      const active = Boolean(roulette);
+      const display = active ? roulette.display : state.rouletteDisplay;
+      const x = 356;
+      const y = 112;
+      const pulse = active && roulette.resolved ? 1 + Math.sin(roulette.time * 18) * .018 : 1;
       ctx.save();
-      ctx.translate(x + 119, y + 88);
+      ctx.translate(x + 83, y + 21);
       ctx.scale(pulse, pulse);
-      ctx.translate(-119, -88);
-      ctx.shadowColor = "rgba(36, 18, 13, .42)";
-      ctx.shadowBlur = 14;
-      ctx.shadowOffsetY = 7;
-      ctx.fillStyle = "#d92e3e";
-      ctx.strokeStyle = roulette.resolved ? "#fff06a" : "#ffd447";
-      ctx.lineWidth = roulette.resolved ? 6 : 4;
-      roundedRect(0, 0, 238, 176, 8);
+      ctx.translate(-83, -21);
+      ctx.fillStyle = active ? "#e53645" : "#9e2935";
+      ctx.strokeStyle = active && roulette.resolved ? "#fff06a" : "#ffc247";
+      ctx.lineWidth = active && roulette.resolved ? 3 : 2;
+      roundedRect(0, 0, 166, 42, 7);
       ctx.fill();
       ctx.stroke();
-      ctx.shadowColor = "transparent";
       ctx.fillStyle = "#ff9f32";
       ctx.beginPath();
-      ctx.moveTo(14, 5);
-      ctx.lineTo(38, -25);
-      ctx.lineTo(66, 5);
-      ctx.moveTo(172, 5);
-      ctx.lineTo(200, -25);
-      ctx.lineTo(224, 5);
+      ctx.moveTo(5, 5);
+      ctx.lineTo(11, -5);
+      ctx.lineTo(20, 4);
+      ctx.moveTo(20, 4);
+      ctx.lineTo(27, -5);
+      ctx.lineTo(33, 5);
       ctx.fill();
-      ctx.fillStyle = "#24120d";
-      ctx.save();
-      ctx.translate(42, 1);
-      ctx.rotate(-.55);
-      ctx.fillRect(-4, -20, 8, 33);
-      ctx.restore();
-      ctx.save();
-      ctx.translate(196, 1);
-      ctx.rotate(.55);
-      ctx.fillRect(-4, -20, 8, 33);
-      ctx.restore();
+      ctx.fillStyle = "#ffc247";
+      ctx.beginPath();
+      ctx.arc(18, 21, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#24120d";
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.textAlign = "center";
-      ctx.fillStyle = "#fff4bf";
-      ctx.font = "900 17px sans-serif";
-      ctx.fillText("老虎轮盘", 119, 24);
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#7b251f";
+      ctx.font = "900 13px sans-serif";
+      ctx.fillText("虎", 18, 22);
       for (let i = 0; i < 3; i += 1) {
-        const reelX = 14 + i * 68;
+        const reelX = 36 + i * 34;
         ctx.fillStyle = "#fff7df";
         ctx.strokeStyle = "#24120d";
-        ctx.lineWidth = 3;
-        roundedRect(reelX, 36, 58, 66, 6);
+        ctx.lineWidth = 2;
+        roundedRect(reelX, 6, 30, 30, 4);
         ctx.fill();
         ctx.stroke();
-        const def = skillDefs[roulette.display[i]];
-        const bounce = roulette.resolved ? 0 : Math.sin(roulette.time * 34 + i) * 5;
-        drawSkillIcon(def.id, reelX + 29, 69 + bounce, 19);
+        const def = skillDefs[display[i]];
+        const bounce = active && !roulette.resolved ? Math.sin(roulette.time * 34 + i) * 2 : 0;
+        drawSkillIcon(def.id, reelX + 15, 21 + bounce, 9);
       }
       ctx.strokeStyle = "#24120d";
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(229, 49);
-      ctx.lineTo(229, 103);
+      ctx.moveTo(145, 10);
+      ctx.lineTo(145, 31);
       ctx.stroke();
-      ctx.fillStyle = "#ffd447";
+      ctx.fillStyle = active ? "#42edff" : "#6f4036";
       ctx.beginPath();
-      ctx.arc(229, 48 + Math.sin(Math.min(1, roulette.time) * Math.PI) * 28, 9, 0, Math.PI * 2);
+      const leverY = active ? 10 + Math.sin(Math.min(1, roulette.time) * Math.PI) * 18 : 10;
+      ctx.arc(145, leverY, 5, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = roulette.resolved ? "#ffd447" : "#42edff";
-      ctx.font = "900 14px sans-serif";
-      ctx.fillText(roulette.title, 119, 126);
-      ctx.fillStyle = "#fff4bf";
-      ctx.font = "900 15px sans-serif";
-      ctx.fillText(roulette.subtitle, 119, 151);
-      for (const boltX of [10, 228]) {
-        ctx.fillStyle = "#fff06a";
-        ctx.beginPath();
-        ctx.arc(boltX, 166, 4, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.fillStyle = active ? "#fff06a" : "#54251f";
+      ctx.beginPath();
+      ctx.arc(157, 8, 3, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
 
